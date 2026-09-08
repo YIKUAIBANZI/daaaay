@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "daaaay 学习时段",
+  "version": "0.1.0",
+  "description": "根据本机 daaaay 已确认日程，在学习时段阻止 Chrome 访问抖音。",
+  "minimum_chrome_version": "120",
+  "permissions": ["alarms", "storage", "declarativeNetRequest"],
+  "host_permissions": ["http://127.0.0.1:18764/*", "*://douyin.com/*", "*://*.douyin.com/*"],
+  "background": {"service_worker":"worker.mjs", "type":"module"},
+  "action": {"default_popup":"status.html"}
+}

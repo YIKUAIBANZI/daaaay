@@ -1,0 +1,49 @@
+# Personal workspace state — never publish schedules or supervision history.
+/AGENTS.md
+/mmr.md
+/monitor-state.json
+/days/
+/blocker/schedule*.json
+
+# Local agent/design workspaces.
+/.superpowers/
+/.playwright-cli/
+/.codex/
+/.agents/
+/docs/superpowers/
+
+# Machine-specific operational notes.
+/native/README.md
+/web/README.md
+/blocker/README.md
+
+# Generated exports and build products.
+/exports/
+/native/.build/
+/native/build/
+*.app
+*.ics
+
+# Language/tool caches.
+__pycache__/
+*.py[cod]
+.swiftpm/
+node_modules/
+
+# Editor and operating-system files.
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+
+# Local secrets and environment overrides.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+
+# Keep the public, empty blocker configuration example.
+!/blocker/schedule.example.json
