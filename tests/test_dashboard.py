@@ -10,6 +10,7 @@ from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'web'))
+import server
 from server import validate_day, calendar_ics, Store, make_handler
 
 
@@ -139,6 +140,89 @@ class DashboardTest(unittest.TestCase):
                 response=conn.getresponse(); self.assertEqual(response.status,409); conn.close()
             finally:
                 srv.shutdown(); srv.server_close(); thread.join()
+
+    def test_move_rejects_a_stale_target_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            store=Store(root)
+            source=store.save('2026-09-09',{'revision':0,'tasks':[self.task()]})
+            target=store.save('2026-09-10',{'revision':0,'tasks':[self.task(id='already-there')]})
+            with self.assertRaises(RuntimeError):
+                store.move_task('2026-09-09','2026-09-10','study-1',source['revision'],target['revision']-1,self.task())
+
+    def test_move_rejects_a_running_source_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            store=Store(root)
+            source=store.save('2026-09-09',{'revision':0,'tasks':[self.task(status='running')]})
+            with self.assertRaises(ValueError):
+                store.move_task('2026-09-09','2026-09-10','study-1',source['revision'],0,self.task())
+
+    def test_move_preserves_server_owned_timer_fields(self):
+        # A client could otherwise convert a paused item into a running timer
+        # or overwrite elapsed time while merely changing its date.
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            source_task=self.task(status='paused',startedAt=None,elapsedSeconds=42)
+            (root/'days/2026-09-09.json').write_text(json.dumps({'date':'2026-09-09','revision':3,'tasks':[source_task],'events':[]}))
+            store=Store(root)
+            replacement=self.task(title='已改标题',start='09:00',end='10:00',status='running',
+                                  startedAt='2026-09-10T09:00:00+08:00',elapsedSeconds=99999)
+            result=store.move_task('2026-09-09','2026-09-10','study-1',3,0,replacement)
+            moved=result['target']['tasks'][0]
+            self.assertEqual(moved['title'],'已改标题')
+            self.assertEqual(moved['status'],'paused')
+            self.assertIsNone(moved['startedAt'])
+            self.assertEqual(moved['elapsedSeconds'],42)
+
+    def test_move_rolls_back_immediately_when_target_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            source_day,target_day='2026-09-09','2026-09-10'
+            source={'date':source_day,'revision':3,'tasks':[self.task()],'events':[]}
+            target={'date':target_day,'revision':2,'tasks':[self.task(id='target-task',block=False)],'events':[]}
+            schedule={'version':1,'windows':[{'id':'2026-09-09-study-1','start':'2026-09-09T14:00:00+08:00','end':'2026-09-09T15:30:00+08:00'}]}
+            (root/'days'/f'{source_day}.json').write_text(json.dumps(source))
+            (root/'days'/f'{target_day}.json').write_text(json.dumps(target))
+            (root/'blocker/schedule.json').write_text(json.dumps(schedule))
+            store=Store(root); original_atomic=server.atomic_json; failed=[False]
+            def fail_target(path,value):
+                if path==store.path(target_day) and not failed[0]:
+                    failed[0]=True
+                    raise OSError('simulated target write failure')
+                return original_atomic(path,value)
+            with patch('server.atomic_json',side_effect=fail_target), self.assertRaises(OSError):
+                store.move_task(source_day,target_day,'study-1',3,2,dict(self.task(),start='09:00',end='10:00'))
+            self.assertEqual(store.read(source_day),source)
+            self.assertEqual(store.read(target_day),target)
+            self.assertEqual(json.loads((root/'blocker/schedule.json').read_text()),schedule)
+            self.assertFalse(store.transaction_path().exists())
+
+    def test_move_rolls_back_immediately_when_blocker_sync_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            source_day,target_day='2026-09-09','2026-09-10'
+            source={'date':source_day,'revision':3,'tasks':[self.task()],'events':[]}
+            target={'date':target_day,'revision':2,'tasks':[self.task(id='target-task',block=False)],'events':[]}
+            schedule={'version':1,'windows':[{'id':'2026-09-09-study-1','start':'2026-09-09T14:00:00+08:00','end':'2026-09-09T15:30:00+08:00'}]}
+            (root/'days'/f'{source_day}.json').write_text(json.dumps(source))
+            (root/'days'/f'{target_day}.json').write_text(json.dumps(target))
+            (root/'blocker/schedule.json').write_text(json.dumps(schedule))
+            store=Store(root); original_sync=Store._sync_blocker_days; failed=[False]
+            def fail_once(instance,days):
+                if not failed[0]:
+                    failed[0]=True
+                    raise OSError('simulated blocker synchronization failure')
+                return original_sync(instance,days)
+            with patch.object(Store,'_sync_blocker_days',new=fail_once), self.assertRaises(OSError):
+                store.move_task(source_day,target_day,'study-1',3,2,dict(self.task(),start='09:00',end='10:00'))
+            self.assertEqual(store.read(source_day),source)
+            self.assertEqual(store.read(target_day),target)
+            self.assertEqual(json.loads((root/'blocker/schedule.json').read_text()),schedule)
+            self.assertFalse(store.transaction_path().exists())
 
     def test_http_requires_origin_and_token_for_writes(self):
         with tempfile.TemporaryDirectory() as tmp:

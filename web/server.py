@@ -175,7 +175,11 @@ class Store:
             if any(t['id']==task_id for t in target['tasks']):
                 raise ValueError('目标日期已存在同 ID 事项')
             moved=dict(source['tasks'][index])
-            moved.update(replacement)
+            # Date edits never own an interval's state or accumulated time.
+            # Preserve the source timer snapshot even if a stale client sends
+            # status, startedAt, or elapsedSeconds in its replacement body.
+            for field in ('title','category','color','start','end','nextDay','note','block'):
+                if field in replacement: moved[field]=replacement[field]
             moved['id']=task_id
             source_clean=validate_day(source_day,{'tasks':source['tasks'][:index]+source['tasks'][index+1:]})
             target_clean=validate_day(target_day,{'tasks':target['tasks']+[moved]})
@@ -189,11 +193,15 @@ class Store:
             journal={'sourceDay':source_day,'targetDay':target_day,
                 'sourceBefore':source,'targetBefore':target}
             atomic_json(self.transaction_path(),journal)
-            atomic_json(self.path(source_day),source_clean)
-            atomic_json(self.path(target_day),target_clean)
-            self._sync_blocker_days({source_day,target_day})
-            self.transaction_path().unlink()
-            return {'source':source_clean,'target':target_clean}
+            try:
+                atomic_json(self.path(source_day),source_clean)
+                atomic_json(self.path(target_day),target_clean)
+                self._sync_blocker_days({source_day,target_day})
+                self.transaction_path().unlink()
+                return {'source':source_clean,'target':target_clean}
+            except Exception:
+                self.recover_move()
+                raise
 
 
 def make_handler(store,html_path,allow_calendar=True):
