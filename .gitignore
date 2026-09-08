@@ -11,6 +11,7 @@
 /.codex/
 /.agents/
 /docs/superpowers/
+/.worktrees/
 
 # Machine-specific operational notes.
 /native/README.md
