@@ -70,6 +70,76 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual([w['id'] for w in windows],['2026-09-07-other'])
             self.assertEqual(store.read('2026-09-06')['events'][-1]['status'],'paused')
 
+    def test_move_task_is_all_or_nothing_and_preserves_provenance(self):
+        # Removing the source task, creating the target task, or losing native
+        # provenance independently would make this cross-date move unsafe.
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            store=Store(root)
+            source=store.save('2026-09-09',{'revision':0,'tasks':[self.task()]})
+            target=store.read('2026-09-10')
+            moved=store.move_task(
+                '2026-09-09','2026-09-10','study-1',source['revision'],target['revision'],
+                dict(self.task(),start='09:00',end='10:00')
+            )
+            self.assertEqual(store.read('2026-09-09')['tasks'],[])
+            self.assertEqual(store.read('2026-09-10')['tasks'][0]['id'],'study-1')
+            self.assertEqual(moved['source']['revision'],source['revision']+1)
+            self.assertEqual(moved['target']['revision'],target['revision']+1)
+            self.assertEqual(moved['target']['events'][-1]['source'],'native_user')
+            with self.assertRaises(RuntimeError):
+                store.move_task('2026-09-10','2026-09-11','study-1',0,0,self.task())
+
+    def test_store_recovers_pending_move_before_reads_are_served(self):
+        # A crash after either write must restore both days from the journal,
+        # never expose an ambiguous half-move to a new Store instance.
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            source_before={'date':'2026-09-09','revision':3,'tasks':[self.task()], 'events':[]}
+            target_before={'date':'2026-09-10','revision':4,'tasks':[], 'events':[]}
+            (root/'days/2026-09-09.json').write_text(json.dumps({'date':'2026-09-09','revision':4,'tasks':[], 'events':[]}))
+            (root/'days/2026-09-10.json').write_text(json.dumps({'date':'2026-09-10','revision':5,'tasks':[self.task()], 'events':[]}))
+            journal=root/'transactions'/'move-task.json'; journal.parent.mkdir()
+            journal.write_text(json.dumps({
+                'sourceDay':'2026-09-09','targetDay':'2026-09-10',
+                'sourceBefore':source_before,'targetBefore':target_before
+            }))
+            recovered=Store(root)
+            self.assertEqual(recovered.read('2026-09-09'),source_before)
+            self.assertEqual(recovered.read('2026-09-10'),target_before)
+            self.assertFalse(journal.exists())
+
+    def test_move_endpoint_requires_current_revisions_and_returns_both_days(self):
+        # Routing stale input to a normal save (or accepting it) would allow a
+        # native editor to overwrite a concurrent change on either day.
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            store=Store(root)
+            source=store.save('2026-09-09',{'revision':0,'tasks':[self.task()]})
+            srv=ThreadingHTTPServer(('127.0.0.1',0),make_handler(store,root/'index.html',False))
+            thread=threading.Thread(target=srv.serve_forever,daemon=True); thread.start()
+            try:
+                conn=http.client.HTTPConnection('127.0.0.1',srv.server_port)
+                conn.request('GET','/api/bootstrap')
+                token=json.loads(conn.getresponse().read())['token']; conn.close()
+                headers={'Origin':f'http://127.0.0.1:{srv.server_port}','X-Daaaay-Token':token,'Content-Type':'application/json'}
+                body={'sourceDate':'2026-09-09','targetDate':'2026-09-10','taskId':'study-1',
+                    'sourceRevision':source['revision'],'targetRevision':0,
+                    'task':dict(self.task(),start='09:00',end='10:00'),'source':'native_user'}
+                conn=http.client.HTTPConnection('127.0.0.1',srv.server_port)
+                conn.request('POST','/api/task/move',json.dumps(body),headers)
+                response=conn.getresponse(); moved=json.loads(response.read()); self.assertEqual(response.status,200); conn.close()
+                self.assertEqual(moved['source']['revision'],2)
+                self.assertEqual(moved['target']['revision'],1)
+                conn=http.client.HTTPConnection('127.0.0.1',srv.server_port)
+                conn.request('POST','/api/task/move',json.dumps(body),headers)
+                response=conn.getresponse(); self.assertEqual(response.status,409); conn.close()
+            finally:
+                srv.shutdown(); srv.server_close(); thread.join()
+
     def test_http_requires_origin_and_token_for_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)

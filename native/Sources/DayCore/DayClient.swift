@@ -6,6 +6,11 @@ public struct ServiceError: LocalizedError {
     public var errorDescription: String? { message }
 }
 
+public struct MoveTaskResult: Decodable {
+    public let source: DayDocument
+    public let target: DayDocument
+}
+
 public actor DayClient {
     public let baseURL: URL
     private let session: URLSession
@@ -32,6 +37,22 @@ public actor DayClient {
         let body=try JSONEncoder().encode(Body(date:document.date,revision:document.revision,tasks:document.tasks))
         let data=try await post("/api/day",body:body)
         return try JSONDecoder().decode(DayDocument.self,from:data)
+    }
+    public func moveTask(_ task: DayTask, from source: String, to target: String,
+                         sourceRevision: Int, targetRevision: Int) async throws -> MoveTaskResult {
+        struct Body: Encodable {
+            let sourceDate: String
+            let targetDate: String
+            let taskId: String
+            let sourceRevision: Int
+            let targetRevision: Int
+            let task: DayTask
+            let source="native_user"
+        }
+        let body=try JSONEncoder().encode(Body(sourceDate:source,targetDate:target,taskId:task.id,
+                                               sourceRevision:sourceRevision,targetRevision:targetRevision,task:task))
+        let data=try await post("/api/task/move",body:body)
+        return try JSONDecoder().decode(MoveTaskResult.self,from:data)
     }
     public func calendar(_ day: String) async throws -> Data { try await request("/api/calendar?date="+day) }
 

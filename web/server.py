@@ -101,13 +101,35 @@ class Store:
     def __init__(self,root):
         self.root=Path(root)
         self.lock=threading.Lock()
+        self.recover_move()
     def path(self,day):
         if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',day): raise ValueError('日期无效')
         date.fromisoformat(day)
         return self.root/'days'/f'{day}.json'
+    def transaction_path(self):
+        return self.root/'transactions'/'move-task.json'
+    def recover_move(self):
+        journal_path=self.transaction_path()
+        if not journal_path.exists(): return
+        journal=json.loads(journal_path.read_text())
+        atomic_json(self.path(journal['sourceDay']),journal['sourceBefore'])
+        atomic_json(self.path(journal['targetDay']),journal['targetBefore'])
+        self._sync_blocker_days({journal['sourceDay'],journal['targetDay']})
+        journal_path.unlink()
     def read(self,day):
         p=self.path(day)
         return json.loads(p.read_text()) if p.exists() else {'date':day,'revision':0,'tasks':[],'events':[]}
+    def _sync_blocker_days(self,days):
+        # Persist website restriction times; do not enable or modify Chrome here.
+        block_path=self.root/'blocker'/'schedule.json'
+        block=json.loads(block_path.read_text()) if block_path.exists() else {'version':1,'windows':[]}
+        block['windows']=[w for w in block['windows'] if not any(w['id'].startswith(day+'-') for day in days)]
+        for day in sorted(days):
+            for t in self.read(day)['tasks']:
+                if t['block'] and t['start'] and t['status'] in ('planned','running'):
+                    start,end=task_times(day,t)
+                    block['windows'].append({'id':day+'-'+t['id'],'start':start.isoformat(),'end':end.isoformat()})
+        atomic_json(block_path,block)
     def save(self,day,body):
         clean=validate_day(day,body)
         with self.lock:
@@ -137,16 +159,41 @@ class Store:
                     events.append({'at':now,'source':source,'id':t['id'],'status':'deleted'})
             clean.update(revision=old['revision']+1,updatedAt=now,events=events[-500:],monitorSyncPending=changed or old.get('monitorSyncPending',False))
             atomic_json(self.path(day),clean)
-            # Persist website restriction times; do not enable or modify Chrome here.
-            block_path=self.root/'blocker'/'schedule.json'
-            block=json.loads(block_path.read_text()) if block_path.exists() else {'version':1,'windows':[]}
-            block['windows']=[w for w in block['windows'] if not w['id'].startswith(day+'-')]
-            for t in clean['tasks']:
-                if t['block'] and t['start'] and t['status'] in ('planned','running'):
-                    start,end=task_times(day,t)
-                    block['windows'].append({'id':day+'-'+t['id'],'start':start.isoformat(),'end':end.isoformat()})
-            atomic_json(block_path,block)
+            self._sync_blocker_days({day})
             return clean
+
+    def move_task(self,source_day,target_day,task_id,source_revision,target_revision,replacement):
+        with self.lock:
+            if source_day==target_day: raise ValueError('来源日期和目标日期必须不同')
+            source,target=self.read(source_day),self.read(target_day)
+            if source['revision']!=source_revision or target['revision']!=target_revision:
+                raise RuntimeError('另一处更新了日程，请刷新后再移动')
+            index=next((i for i,t in enumerate(source['tasks']) if t['id']==task_id),None)
+            if index is None: raise ValueError('要移动的事项不存在')
+            if source['tasks'][index]['status']=='running':
+                raise ValueError('请先暂停正在计时的事项，再修改日期')
+            if any(t['id']==task_id for t in target['tasks']):
+                raise ValueError('目标日期已存在同 ID 事项')
+            moved=dict(source['tasks'][index])
+            moved.update(replacement)
+            moved['id']=task_id
+            source_clean=validate_day(source_day,{'tasks':source['tasks'][:index]+source['tasks'][index+1:]})
+            target_clean=validate_day(target_day,{'tasks':target['tasks']+[moved]})
+            now=datetime.now(TZ).isoformat(timespec='seconds')
+            source_clean.update(revision=source_revision+1,updatedAt=now,
+                events=(source.get('events',[])+[{'at':now,'source':'native_user','id':task_id,'status':'moved_out'}])[-500:],
+                monitorSyncPending=True)
+            target_clean.update(revision=target_revision+1,updatedAt=now,
+                events=(target.get('events',[])+[{'at':now,'source':'native_user','id':task_id,'status':moved['status']}])[-500:],
+                monitorSyncPending=True)
+            journal={'sourceDay':source_day,'targetDay':target_day,
+                'sourceBefore':source,'targetBefore':target}
+            atomic_json(self.transaction_path(),journal)
+            atomic_json(self.path(source_day),source_clean)
+            atomic_json(self.path(target_day),target_clean)
+            self._sync_blocker_days({source_day,target_day})
+            self.transaction_path().unlink()
+            return {'source':source_clean,'target':target_clean}
 
 
 def make_handler(store,html_path,allow_calendar=True):
@@ -194,6 +241,12 @@ def make_handler(store,html_path,allow_calendar=True):
                 body=json.loads(self.rfile.read(length))
                 day=body.get('date','')
                 if self.path=='/api/day': return self.respond(200,store.save(day,body))
+                if self.path=='/api/task/move':
+                    if body.get('source')!='native_user': raise ValueError('移动事项来源无效')
+                    return self.respond(200,store.move_task(
+                        body['sourceDate'],body['targetDate'],body['taskId'],
+                        body['sourceRevision'],body['targetRevision'],body['task']
+                    ))
                 if self.path=='/api/calendar/open':
                     if not allow_calendar: return self.respond(403,{'error':'测试环境不打开日历'})
                     data=store.read(day)

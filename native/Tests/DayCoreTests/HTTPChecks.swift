@@ -53,6 +53,30 @@ enum HTTPChecks {
         precondition(calendar.contains("BEGIN:VEVENT") && calendar.contains("2099-01-02-timer-check@daaaay.local"))
         let raw=try String(contentsOf:root.appendingPathComponent("days/\(day).json"),encoding:.utf8)
         precondition(raw.contains("native_user"),"Native edits have accurate provenance")
-        print("PASS: HTTP save / timer persistence / conflict / calendar / offline / service restart")
+        let sourceDay="2099-01-03", targetDay="2099-01-04"
+        var source=try await client.read(sourceDay)
+        source.tasks=[DayTask(id:"move-check",title:"跨日移动",start:"10:00",end:"11:00",status:.planned)]
+        let savedSource=try await client.save(source)
+        let target=try await client.read(targetDay)
+        let moved=try await client.moveTask(savedSource.tasks[0],from:sourceDay,to:targetDay,
+                                            sourceRevision:savedSource.revision,targetRevision:target.revision)
+        precondition(moved.source.revision == savedSource.revision+1 && moved.source.tasks.isEmpty,
+                     "Move removes the source task and advances its revision")
+        precondition(moved.target.revision == target.revision+1 && moved.target.tasks.map(\.id) == ["move-check"],
+                     "Move creates exactly one target task and advances its revision")
+        process.terminate(); process.waitUntilExit()
+        process=try launch()
+        let restored=DayClient(baseURL:base)
+        for _ in 0..<30 {
+            if (try? await restored.read(sourceDay)) != nil { break }
+            try await Task.sleep(nanoseconds:100_000_000)
+        }
+        let persistedSource=try await restored.read(sourceDay)
+        let persistedTarget=try await restored.read(targetDay)
+        precondition(persistedSource.revision == moved.source.revision && persistedSource.tasks.isEmpty,
+                     "Restart preserves the moved-out source day")
+        precondition(persistedTarget.revision == moved.target.revision && persistedTarget.tasks.map(\.id) == ["move-check"],
+                     "Restart preserves the moved-in target day")
+        print("PASS: HTTP save / timer persistence / conflict / calendar / move / service restart")
     }
 }
