@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var toast: String?
     @Published var category: String?
+    @Published var sidebarCollapsed = false
     @Published var shortcutError: String?
     @Published var floatingVisible = false
     @Published var floatingPinned = true

@@ -15,8 +15,11 @@ struct DayCoreTests {
         try suite.testScheduleEditingSnapsAndCrossesMidnight()
         try suite.testScheduleEditingNormalizesUntimedAndTimedDrafts()
         try suite.testScheduleEditingRejectsInvalidClockValues()
+        suite.testLeapMonthHasCompleteWeeksAndSelectedDay()
+        suite.testMonthMarksOnlyKnownDays()
+        suite.testProgressExcludesCancelledAndHandlesEmptyDays()
         DaylightThemeChecks.run()
-        print("PASS: 9 DayCore checks")
+        print("PASS: 12 DayCore checks")
         if CommandLine.arguments.contains("--http") { try await HTTPChecks.run() }
     }
 
@@ -28,6 +31,40 @@ struct DayCoreTests {
         XCTAssertEqual(task.deadline(on: day.date)?.timeIntervalSince(now), 1200)
         XCTAssertEqual(DayClock.dayString(now), "2026-09-08")
         XCTAssertEqual(DayClock.shift("2026-12-31", by: 1), "2027-01-01")
+    }
+
+    func testLeapMonthHasCompleteWeeksAndSelectedDay() {
+        let cells = CalendarLogic.monthCells(containing: "2024-02-29", knownDays: [])
+        XCTAssertEqual(cells.count, 35)
+        XCTAssertEqual(cells.first?.day, "2024-01-29")
+        XCTAssertEqual(cells.last?.day, "2024-03-03")
+        XCTAssertEqual(cells.filter(\.inMonth).count, 29)
+        XCTAssertEqual(cells.first(where: { $0.day == "2024-02-29" })?.number, 29)
+        XCTAssertEqual(cells.first(where: { $0.day == "2024-02-29" })?.inMonth, true)
+        XCTAssertEqual(CalendarLogic.monthCells(containing: "invalid", knownDays: []).count, 0)
+    }
+
+    func testMonthMarksOnlyKnownDays() {
+        let cells = CalendarLogic.monthCells(containing: "2024-02-15", knownDays: ["2024-01-31", "2024-02-29", "2024-06-01"])
+        XCTAssertEqual(cells.filter(\.hasData).map(\.day), ["2024-01-31", "2024-02-29"])
+        XCTAssertEqual(cells.first(where: { $0.day == "2024-02-15" })?.hasData, false)
+        let september = CalendarLogic.monthCells(containing: "2024-09-01", knownDays: [])
+        XCTAssertEqual(september.count, 42)
+        XCTAssertEqual(september.first?.day, "2024-08-26")
+        XCTAssertEqual(september.last?.day, "2024-10-06")
+    }
+
+    func testProgressExcludesCancelledAndHandlesEmptyDays() {
+        let tasks = TaskStatus.allCases.map { DayTask(title: $0.rawValue, status: $0) }
+        let counts = CalendarLogic.completionCounts(DayDocument(date: "2024-02-29", tasks: tasks))
+        XCTAssertEqual(counts.done, 1)
+        XCTAssertEqual(counts.total, 4)
+        let empty = CalendarLogic.completionCounts(DayDocument(date: "2024-02-29"))
+        XCTAssertEqual(empty.done, 0)
+        XCTAssertEqual(empty.total, 0)
+        let cancelled = CalendarLogic.completionCounts(DayDocument(date: "2024-02-29", tasks: [DayTask(status: .cancelled)]))
+        XCTAssertEqual(cancelled.done, 0)
+        XCTAssertEqual(cancelled.total, 0)
     }
 
     func testPausedTimerStaysConstantAndResumedTimerAddsIntervals() throws {
