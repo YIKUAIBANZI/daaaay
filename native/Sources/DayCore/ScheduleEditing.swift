@@ -102,9 +102,9 @@ public enum ScheduleEditing {
     }
 
     private static func snappedClock(hour: Int, minute: Int) -> SnappedClock {
-        let snapped = snapMinute(minute)
-        let carriedHour = snapped < minute ? hour + 1 : hour
-        return SnappedClock(hour: carriedHour % 24, minute: snapped, dayOffset: carriedHour / 24)
+        let roundedMinute = ((minute + 2) / 5) * 5
+        let carriedHour = hour + roundedMinute / 60
+        return SnappedClock(hour: carriedHour % 24, minute: roundedMinute % 60, dayOffset: carriedHour / 24)
     }
 
     private static func snappedStartDate(_ date: Date) -> Date {
@@ -119,10 +119,11 @@ public enum ScheduleEditing {
         base.hour = hour
         base.minute = 0
         base.second = 0
-        let midnight = calendar.date(from: base)!
-        let snapped = snapMinute(minute)
-        let carry = snapped < minute ? 60 - minute + snapped : snapped - minute
-        return calendar.date(byAdding: .minute, value: minute + carry, to: midnight)!
+        let hourStart = calendar.date(from: base)!
+        // Keep 60 until date arithmetic performs the carry; a smaller rounded minute
+        // such as 31 → 30 is ordinary rounding down, not an hour transition.
+        let roundedMinute = ((minute + 2) / 5) * 5
+        return calendar.date(byAdding: .minute, value: roundedMinute, to: hourStart)!
     }
 
     private static func clockString(hour: Int, minute: Int) -> String {

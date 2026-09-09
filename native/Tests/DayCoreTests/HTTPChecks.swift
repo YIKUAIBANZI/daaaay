@@ -14,7 +14,10 @@ enum HTTPChecks {
             try p.run(); return p
         }
         var process=try launch()
-        defer { if process.isRunning { process.terminate(); process.waitUntilExit() }; try? FileManager.default.removeItem(at:root) }
+        // Foundation can wait indefinitely for a termination notification on this async
+        // cleanup path even after the child exits. SIGTERM is enough for final teardown;
+        // restart checks below still wait explicitly before rebinding the same port.
+        defer { if process.isRunning { process.terminate() }; try? FileManager.default.removeItem(at:root) }
         let client=DayClient(baseURL:base)
         var connected=false
         for _ in 0..<30 {
@@ -128,7 +131,11 @@ enum HTTPChecks {
         environment["DAAAAY_SERVICE_URL"] = base.absoluteString
         check.environment = environment
         try check.run(); check.waitUntilExit()
-        precondition(check.terminationStatus == 0, "Real AppModel editor workflow checks failed")
+        guard check.terminationStatus == 0 else {
+            // Throw so the caller's defer terminates the isolated server even during a RED run.
+            throw NSError(domain: "EditorWorkflowChecks", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Real AppModel editor workflow checks failed"])
+        }
     }
 
     static let editorWorkflow = #"""
@@ -148,6 +155,14 @@ enum HTTPChecks {
                                         validation: Binding(get: { validation }, set: { validation = $0 }))
             picker.applyDuration(90)
             precondition(draftTask.end == "11:05" && !draftTask.nextDay)
+            draftTask.start = "09:31"
+            picker.applyDuration(90)
+            precondition(draftDate == "2099-03-01" && draftTask.start == "09:30" && draftTask.end == "11:00" && !draftTask.nextDay,
+                         "Rounding 09:31 down must not advance the start hour or date")
+            draftTask.start = "23:31"
+            picker.applyDuration(90)
+            precondition(draftDate == "2099-03-01" && draftTask.start == "23:30" && draftTask.end == "01:00" && draftTask.nextDay,
+                         "Rounding 23:31 down must keep the original task date while its end crosses midnight")
             draftTask.start = "23:40"
             picker.applyDuration(90)
             precondition(draftTask.end == "01:10" && draftTask.nextDay)

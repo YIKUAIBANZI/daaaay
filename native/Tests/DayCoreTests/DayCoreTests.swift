@@ -15,11 +15,12 @@ struct DayCoreTests {
         try suite.testScheduleEditingSnapsAndCrossesMidnight()
         try suite.testScheduleEditingNormalizesUntimedAndTimedDrafts()
         try suite.testScheduleEditingRejectsInvalidClockValues()
+        try suite.testScheduleEditingRoundsDownWithoutCarryingHour()
         suite.testLeapMonthHasCompleteWeeksAndSelectedDay()
         suite.testMonthMarksOnlyKnownDays()
         suite.testProgressExcludesCancelledAndHandlesEmptyDays()
         DaylightThemeChecks.run()
-        print("PASS: 12 DayCore checks")
+        print("PASS: 13 DayCore checks")
         if CommandLine.arguments.contains("--http") { try await HTTPChecks.run() }
     }
 
@@ -170,6 +171,32 @@ struct DayCoreTests {
         } catch {
             preconditionFailure("Unexpected duration validation error: \(error)")
         }
+    }
+
+    func testScheduleEditingRoundsDownWithoutCarryingHour() throws {
+        let fixtures: [(String, String, String, String, Bool)] = [
+            ("09:31", "2026-09-09", "09:30", "11:00", false),
+            ("23:31", "2026-09-09", "23:30", "01:00", true),
+            ("09:58", "2026-09-09", "10:00", "11:30", false),
+            ("23:58", "2026-09-10", "00:00", "01:30", false)
+        ]
+        for (input, expectedDate, expectedStart, expectedEnd, expectedNextDay) in fixtures {
+            let start = try XCTUnwrap(DayClock.parseISO("2026-09-09T\(input):00+08:00"))
+            let draft = try ScheduleEditing.applying(durationMinutes: 90, to: start)
+            XCTAssertEqual(draft.date, expectedDate)
+            XCTAssertEqual(draft.start, expectedStart)
+            XCTAssertEqual(draft.end, expectedEnd)
+            XCTAssertEqual(draft.nextDay, expectedNextDay)
+        }
+        let daytime = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 9, startMinute: 31,
+                                                     endHour: 11, endMinute: 1, isUntimed: false)
+        XCTAssertEqual(daytime, ScheduleDraft(date: "2026-09-09", start: "09:30", end: "11:00", nextDay: false, isUntimed: false))
+        let overnight = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 31,
+                                                       endHour: 1, endMinute: 1, isUntimed: false)
+        XCTAssertEqual(overnight, ScheduleDraft(date: "2026-09-09", start: "23:30", end: "01:00", nextDay: true, isUntimed: false))
+        let carried = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 58,
+                                                     endHour: 1, endMinute: 31, isUntimed: false)
+        XCTAssertEqual(carried, ScheduleDraft(date: "2026-09-10", start: "00:00", end: "01:30", nextDay: false, isUntimed: false))
     }
 }
 
