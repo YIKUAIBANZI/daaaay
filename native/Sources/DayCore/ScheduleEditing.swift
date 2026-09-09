@@ -25,6 +25,7 @@ public enum ScheduleEditingError: Error, Equatable {
     case invalidDate
     case invalidHour
     case invalidMinute
+    case invalidDuration
 }
 
 public enum ScheduleEditing {
@@ -37,8 +38,10 @@ public enum ScheduleEditing {
     }
 
     /// Apply a bounded duration to a local Shanghai start date.
-    public static func applying(durationMinutes: Int, to start: Date) -> ScheduleDraft {
-        precondition((0...1440).contains(durationMinutes), "durationMinutes must be between 0 and 1440")
+    public static func applying(durationMinutes: Int, to start: Date) throws -> ScheduleDraft {
+        guard (0...1440).contains(durationMinutes) else {
+            throw ScheduleEditingError.invalidDuration
+        }
 
         let snappedStart = snappedStartDate(start)
         let end = DayClock.calendar.date(byAdding: .minute, value: durationMinutes, to: snappedStart)!
@@ -76,7 +79,8 @@ public enum ScheduleEditing {
         // The picker represents the end relative to the normalized start.
         // Equal times are a zero-length same-day slot; only an earlier end
         // crosses midnight automatically.
-        let nextDay = end.totalMinutes < start.totalMinutes
+        let nextDay = end.dayOffset > start.dayOffset
+            || (end.dayOffset == start.dayOffset && end.clockMinutes < start.clockMinutes)
         return ScheduleDraft(
             date: DayClock.shift(date, by: start.dayOffset),
             start: clockString(hour: start.hour, minute: start.minute),
@@ -94,7 +98,7 @@ public enum ScheduleEditing {
         let hour: Int
         let minute: Int
         let dayOffset: Int
-        var totalMinutes: Int { dayOffset * 1440 + hour * 60 + minute }
+        var clockMinutes: Int { hour * 60 + minute }
     }
 
     private static func snappedClock(hour: Int, minute: Int) -> SnappedClock {

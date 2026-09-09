@@ -76,7 +76,7 @@ struct DayCoreTests {
 
     func testScheduleEditingSnapsAndCrossesMidnight() throws {
         let start = try XCTUnwrap(DayClock.parseISO("2026-09-09T23:40:00+08:00"))
-        let draft = ScheduleEditing.applying(durationMinutes: 90, to: start)
+        let draft = try ScheduleEditing.applying(durationMinutes: 90, to: start)
         XCTAssertEqual(draft.date, "2026-09-09")
         XCTAssertEqual(draft.start, "23:40")
         XCTAssertEqual(draft.end, "01:10")
@@ -85,7 +85,7 @@ struct DayCoreTests {
         XCTAssertEqual(ScheduleEditing.snapMinute(58), 0)
         XCTAssertEqual(ScheduleEditing.snapMinute(3), 5)
 
-        let fullDay = ScheduleEditing.applying(durationMinutes: 1440, to: start)
+        let fullDay = try ScheduleEditing.applying(durationMinutes: 1440, to: start)
         XCTAssertEqual(fullDay.end, "23:40")
         XCTAssertEqual(fullDay.nextDay, true)
     }
@@ -98,6 +98,10 @@ struct DayCoreTests {
         let untimed = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 58,
                                                      endHour: 1, endMinute: 3, isUntimed: true)
         XCTAssertEqual(untimed, ScheduleDraft(date: "2026-09-09", start: "", end: "", nextDay: false, isUntimed: true))
+
+        let roundedIntoNextDate = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 58,
+                                                                 endHour: 0, endMinute: 0, isUntimed: false)
+        XCTAssertEqual(roundedIntoNextDate, ScheduleDraft(date: "2026-09-10", start: "00:00", end: "00:00", nextDay: false, isUntimed: false))
         XCTAssertEqual(ScheduleEditing.saveRoute(sourceDate: "2026-09-09", targetDate: "2026-09-09"), .sameDay)
         XCTAssertEqual(ScheduleEditing.saveRoute(sourceDate: "2026-09-09", targetDate: "2026-09-10"), .move)
     }
@@ -117,6 +121,16 @@ struct DayCoreTests {
             preconditionFailure("An invalid date must be rejected")
         } catch {
             // Expected.
+        }
+
+        let start = try XCTUnwrap(DayClock.parseISO("2026-09-09T23:40:00+08:00"))
+        do {
+            _ = try ScheduleEditing.applying(durationMinutes: 1441, to: start)
+            preconditionFailure("A duration above 24 hours must be rejected")
+        } catch let error as ScheduleEditingError {
+            XCTAssertEqual(error, .invalidDuration)
+        } catch {
+            preconditionFailure("Unexpected duration validation error: \(error)")
         }
     }
 }
