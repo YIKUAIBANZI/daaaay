@@ -12,7 +12,10 @@ struct DayCoreTests {
         try suite.testFocusKeepsYesterdayRunningTaskWhenBrowsingAnotherDay()
         try suite.testFocusExcludesDoneCancelledAndExpiredPlans()
         try suite.testPausedFocusCanResume()
-        print("PASS: 5 DayCore behavior checks")
+        try suite.testScheduleEditingSnapsAndCrossesMidnight()
+        try suite.testScheduleEditingNormalizesUntimedAndTimedDrafts()
+        try suite.testScheduleEditingRejectsInvalidClockValues()
+        print("PASS: 8 DayCore behavior checks")
         if CommandLine.arguments.contains("--http") { try await HTTPChecks.run() }
     }
 
@@ -69,6 +72,52 @@ struct DayCoreTests {
         let focus = FocusItem.choose(today: DayDocument(date: "2026-09-07", tasks: [task]), yesterday: nil, now: now)
         XCTAssertEqual(focus?.task.status, .paused)
         XCTAssertEqual(focus?.task.elapsed(at: now), 10)
+    }
+
+    func testScheduleEditingSnapsAndCrossesMidnight() throws {
+        let start = try XCTUnwrap(DayClock.parseISO("2026-09-09T23:40:00+08:00"))
+        let draft = ScheduleEditing.applying(durationMinutes: 90, to: start)
+        XCTAssertEqual(draft.date, "2026-09-09")
+        XCTAssertEqual(draft.start, "23:40")
+        XCTAssertEqual(draft.end, "01:10")
+        XCTAssertEqual(draft.nextDay, true)
+        XCTAssertEqual(draft.isUntimed, false)
+        XCTAssertEqual(ScheduleEditing.snapMinute(58), 0)
+        XCTAssertEqual(ScheduleEditing.snapMinute(3), 5)
+
+        let fullDay = ScheduleEditing.applying(durationMinutes: 1440, to: start)
+        XCTAssertEqual(fullDay.end, "23:40")
+        XCTAssertEqual(fullDay.nextDay, true)
+    }
+
+    func testScheduleEditingNormalizesUntimedAndTimedDrafts() throws {
+        let timed = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 40,
+                                                   endHour: 1, endMinute: 10, isUntimed: false)
+        XCTAssertEqual(timed, ScheduleDraft(date: "2026-09-09", start: "23:40", end: "01:10", nextDay: true, isUntimed: false))
+
+        let untimed = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 58,
+                                                     endHour: 1, endMinute: 3, isUntimed: true)
+        XCTAssertEqual(untimed, ScheduleDraft(date: "2026-09-09", start: "", end: "", nextDay: false, isUntimed: true))
+        XCTAssertEqual(ScheduleEditing.saveRoute(sourceDate: "2026-09-09", targetDate: "2026-09-09"), .sameDay)
+        XCTAssertEqual(ScheduleEditing.saveRoute(sourceDate: "2026-09-09", targetDate: "2026-09-10"), .move)
+    }
+
+    func testScheduleEditingRejectsInvalidClockValues() throws {
+        do {
+            _ = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 24, startMinute: 0,
+                                               endHour: 1, endMinute: 0, isUntimed: false)
+            preconditionFailure("An hour outside 0...23 must be rejected")
+        } catch {
+            // Expected: normalized input is a throwing boundary for invalid picker values.
+        }
+
+        do {
+            _ = try ScheduleEditing.normalized(date: "not-a-date", startHour: 9, startMinute: 0,
+                                               endHour: 10, endMinute: 0, isUntimed: false)
+            preconditionFailure("An invalid date must be rejected")
+        } catch {
+            // Expected.
+        }
     }
 }
 
