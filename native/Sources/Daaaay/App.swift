@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         withExtendedLifetime(delegate) { app.run() }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = NSAppearance(named: .aqua)
         model=AppModel(); windows=WindowController(model:model)
         model.showMain={ [weak self] in self?.windows.showMain() }
         model.toggleFloating={ [weak self] in self?.windows.togglePanel() }

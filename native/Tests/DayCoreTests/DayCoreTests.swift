@@ -15,7 +15,8 @@ struct DayCoreTests {
         try suite.testScheduleEditingSnapsAndCrossesMidnight()
         try suite.testScheduleEditingNormalizesUntimedAndTimedDrafts()
         try suite.testScheduleEditingRejectsInvalidClockValues()
-        print("PASS: 8 DayCore behavior checks")
+        DaylightThemeChecks.run()
+        print("PASS: 9 DayCore checks")
         if CommandLine.arguments.contains("--http") { try await HTTPChecks.run() }
     }
 
