@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     @Published var online = false
     @Published var busy = false
     @Published var error: String?
+    @Published var editorConflictDates: Set<String> = []
     @Published var toast: String?
     @Published var category: String?
     @Published var sidebarCollapsed = false
@@ -117,6 +118,74 @@ final class AppModel: ObservableObject {
         doc.tasks[index].startedAt=nil
         Task {
             if await save(doc) { announce(status == .running ? "开始了，先做眼前这一小步。" : "已保存") }
+        }
+    }
+    func saveEditedTask(_ task: DayTask, original: DayDocument, targetDate: String) async -> Bool {
+        if ScheduleEditing.saveRoute(sourceDate: original.date, targetDate: targetDate) == .sameDay {
+            var edited = original
+            if let index = edited.tasks.firstIndex(where: { $0.id == task.id }) { edited.tasks[index] = task }
+            else { edited.tasks.append(task) }
+            let succeeded = await save(edited)
+            if succeeded { editorConflictDates = [] }
+            return succeeded
+        }
+        guard task.status != .running,
+              original.tasks.first(where: { $0.id == task.id })?.status != .running else {
+            error = "这个事项正在计时，请先暂停，再移动到另一天。"
+            return false
+        }
+        guard online && !busy else { return false }
+        while refreshing { try? await Task.sleep(nanoseconds: 30_000_000) }
+        guard online && !busy else { return false }
+        busy = true
+        defer { busy = false }
+        do {
+            var target = try await client.read(targetDate)
+            if original.tasks.contains(where: { $0.id == task.id }) {
+                let result = try await client.moveTask(task, from: original.date, to: targetDate,
+                                                       sourceRevision: original.revision, targetRevision: target.revision)
+                var updated = documents
+                updated[result.source.date] = result.source
+                updated[result.target.date] = result.target
+                documents = updated
+            } else {
+                // Changing a new item's date is creation in that day, not a move of an absent source item.
+                target.tasks.append(task)
+                let saved = try await client.save(target)
+                documents[saved.date] = saved
+            }
+            selectedDate = targetDate; category = nil
+            error = nil; editorConflictDates = []; online = true
+            return true
+        } catch {
+            if let serviceError = error as? ServiceError {
+                self.error = serviceError.message
+                if serviceError.code == 409 { editorConflictDates = [original.date, targetDate] }
+            } else {
+                self.error = "保存结果尚未确认，请恢复连接并重新载入两天后核对。\n" + error.localizedDescription
+                // A lost response can mean the move committed; require reload before any retry.
+                editorConflictDates = [original.date, targetDate]
+            }
+            // A target conflict need not change the source revision. Keep an explicit editor conflict
+            // marker so the user still has to acknowledge the freshly loaded pair before retrying.
+            _ = await reloadEditorDays(sourceDate: original.date, targetDate: targetDate)
+            return false
+        }
+    }
+
+    @discardableResult
+    func reloadEditorDays(sourceDate: String, targetDate: String) async -> Bool {
+        do {
+            let source = try await client.read(sourceDate)
+            let target = targetDate == sourceDate ? source : try await client.read(targetDate)
+            var updated = documents
+            updated[source.date] = source; updated[target.date] = target
+            documents = updated; online = true
+            return true
+        } catch {
+            online = false
+            self.error = "重新载入未完成，请恢复本机服务后再试。\n" + error.localizedDescription
+            return false
         }
     }
     func remove(_ task: DayTask, from original: DayDocument) async -> Bool {
