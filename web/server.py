@@ -100,7 +100,7 @@ def atomic_json(path,value):
 class Store:
     def __init__(self,root):
         self.root=Path(root)
-        self.lock=threading.Lock()
+        self.lock=threading.RLock()
         self.recover_move()
     def path(self,day):
         if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',day): raise ValueError('日期无效')
@@ -109,27 +109,30 @@ class Store:
     def transaction_path(self):
         return self.root/'transactions'/'move-task.json'
     def recover_move(self):
-        journal_path=self.transaction_path()
-        if not journal_path.exists(): return
-        journal=json.loads(journal_path.read_text())
-        atomic_json(self.path(journal['sourceDay']),journal['sourceBefore'])
-        atomic_json(self.path(journal['targetDay']),journal['targetBefore'])
-        self._sync_blocker_days({journal['sourceDay'],journal['targetDay']})
-        journal_path.unlink()
+        with self.lock:
+            journal_path=self.transaction_path()
+            if not journal_path.exists(): return
+            journal=json.loads(journal_path.read_text())
+            atomic_json(self.path(journal['sourceDay']),journal['sourceBefore'])
+            atomic_json(self.path(journal['targetDay']),journal['targetBefore'])
+            self._sync_blocker_days({journal['sourceDay'],journal['targetDay']})
+            journal_path.unlink()
     def read(self,day):
-        p=self.path(day)
-        return json.loads(p.read_text()) if p.exists() else {'date':day,'revision':0,'tasks':[],'events':[]}
+        with self.lock:
+            p=self.path(day)
+            return json.loads(p.read_text()) if p.exists() else {'date':day,'revision':0,'tasks':[],'events':[]}
     def _sync_blocker_days(self,days):
-        # Persist website restriction times; do not enable or modify Chrome here.
-        block_path=self.root/'blocker'/'schedule.json'
-        block=json.loads(block_path.read_text()) if block_path.exists() else {'version':1,'windows':[]}
-        block['windows']=[w for w in block['windows'] if not any(w['id'].startswith(day+'-') for day in days)]
-        for day in sorted(days):
-            for t in self.read(day)['tasks']:
-                if t['block'] and t['start'] and t['status'] in ('planned','running'):
-                    start,end=task_times(day,t)
-                    block['windows'].append({'id':day+'-'+t['id'],'start':start.isoformat(),'end':end.isoformat()})
-        atomic_json(block_path,block)
+        with self.lock:
+            # Persist website restriction times; do not enable or modify Chrome here.
+            block_path=self.root/'blocker'/'schedule.json'
+            block=json.loads(block_path.read_text()) if block_path.exists() else {'version':1,'windows':[]}
+            block['windows']=[w for w in block['windows'] if not any(w['id'].startswith(day+'-') for day in days)]
+            for day in sorted(days):
+                for t in self.read(day)['tasks']:
+                    if t['block'] and t['start'] and t['status'] in ('planned','running'):
+                        start,end=task_times(day,t)
+                        block['windows'].append({'id':day+'-'+t['id'],'start':start.isoformat(),'end':end.isoformat()})
+            atomic_json(block_path,block)
     def save(self,day,body):
         clean=validate_day(day,body)
         with self.lock:

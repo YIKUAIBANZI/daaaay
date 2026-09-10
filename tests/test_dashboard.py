@@ -5,6 +5,7 @@ import json
 import threading
 import http.client
 import copy
+import queue
 from datetime import datetime
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
@@ -91,6 +92,103 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual(moved['target']['events'][-1]['source'],'native_user')
             with self.assertRaises(RuntimeError):
                 store.move_task('2026-09-10','2026-09-11','study-1',0,0,self.task())
+
+    def test_http_reads_wait_for_a_cross_date_move_transaction(self):
+        # Removing Store.read's transaction lock would let the two GETs read
+        # the source-after / target-before state while the move is half-applied.
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); (root/'days').mkdir(); (root/'blocker').mkdir()
+            (root/'blocker/schedule.json').write_text('{"version":1,"windows":[]}')
+            store=Store(root)
+            source_day,target_day='2026-09-09','2026-09-10'
+            source=store.save(source_day,{'revision':0,'tasks':[self.task()]})
+
+            observations=queue.Queue()
+            observe_reads=threading.Event()
+            source_replaced=threading.Event()
+            continue_move=threading.Event()
+            move_thread_id=[None]
+
+            class ObservedLock:
+                def __init__(self,inner): self.inner=inner
+                def __enter__(self):
+                    if observe_reads.is_set() and threading.get_ident()!=move_thread_id[0]:
+                        observations.put(('lock',None))
+                    self.inner.acquire()
+                    return self
+                def __exit__(self,*_): self.inner.release()
+
+            store.lock=ObservedLock(store.lock)
+            original_atomic=server.atomic_json
+            original_exists=Path.exists
+            day_paths={store.path(source_day),store.path(target_day)}
+
+            def controlled_atomic(path,value):
+                original_atomic(path,value)
+                if path==store.path(source_day) and threading.get_ident()==move_thread_id[0]:
+                    source_replaced.set()
+                    if not continue_move.wait(5):
+                        raise AssertionError('test did not release the controlled move window')
+
+            def observed_exists(path):
+                value=original_exists(path)
+                if observe_reads.is_set() and threading.get_ident()!=move_thread_id[0] and path in day_paths:
+                    observations.put(('file',path.name))
+                return value
+
+            srv=ThreadingHTTPServer(('127.0.0.1',0),make_handler(store,root/'index.html',False))
+            server_thread=threading.Thread(target=srv.serve_forever,daemon=True)
+            server_thread.start()
+            move_errors=[]
+            responses={}
+
+            def move():
+                move_thread_id[0]=threading.get_ident()
+                try:
+                    store.move_task(source_day,target_day,'study-1',source['revision'],0,
+                                    dict(self.task(),start='09:00',end='10:00'))
+                except Exception as error:
+                    move_errors.append(error)
+
+            def get_day(day):
+                conn=http.client.HTTPConnection('127.0.0.1',srv.server_port,timeout=5)
+                try:
+                    conn.request('GET',f'/api/day?date={day}')
+                    response=conn.getresponse()
+                    responses[day]=(response.status,json.loads(response.read()))
+                finally:
+                    conn.close()
+
+            mover=threading.Thread(target=move,name='move-worker')
+            readers=[]
+            observations_seen=[]
+            try:
+                with patch('server.atomic_json',side_effect=controlled_atomic), \
+                     patch.object(Path,'exists',new=observed_exists):
+                    mover.start()
+                    self.assertTrue(source_replaced.wait(5),'move did not reach the controlled replace window')
+                    observe_reads.set()
+                    readers=[threading.Thread(target=get_day,args=(day,),name=f'get-{day}')
+                             for day in (source_day,target_day)]
+                    for reader in readers: reader.start()
+                    observations_seen=[observations.get(timeout=5) for _ in readers]
+                    continue_move.set()
+                    mover.join(5)
+                    for reader in readers: reader.join(5)
+            finally:
+                continue_move.set()
+                mover.join(5)
+                for reader in readers: reader.join(5)
+                srv.shutdown(); srv.server_close(); server_thread.join(5)
+
+            self.assertFalse(mover.is_alive())
+            self.assertFalse(any(reader.is_alive() for reader in readers))
+            self.assertEqual(move_errors,[])
+            self.assertEqual([kind for kind,_ in observations_seen],['lock','lock'])
+            self.assertEqual(responses[source_day][0],200)
+            self.assertEqual(responses[target_day][0],200)
+            self.assertEqual(responses[source_day][1]['tasks'],[])
+            self.assertEqual(responses[target_day][1]['tasks'][0]['id'],'study-1')
 
     def test_store_recovers_pending_move_before_reads_are_served(self):
         # A crash after either write must restore both days from the journal,
