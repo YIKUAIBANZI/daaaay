@@ -176,6 +176,13 @@ enum HTTPChecks {
             precondition(draftTask.start == "09:35" && draftTask.end == "11:05")
             picker.applyDuration(1441)
             precondition(validation != nil && draftTask.end == "11:05", "Invalid duration is recoverable")
+            draftTask.start = "09:35"; draftTask.end = "09:35"; draftTask.nextDay = true
+            picker.setClock("09:35", isStart: true)
+            precondition(draftTask.nextDay, "Confirming unchanged start preserves explicit 24 hours")
+            picker.setClock("09:35", isStart: false)
+            precondition(draftTask.nextDay, "Confirming unchanged end preserves explicit 24 hours")
+            picker.setClock("10:00", isStart: false)
+            precondition(!draftTask.nextDay, "Changing end recomputes nextDay")
             let wheel = TimeWheelView(frame: NSRect(x: 0, y: 0, width: 80, height: 160))
             wheel.values = Array(stride(from: 0, through: 55, by: 5)); wheel.selected = 30
             func key(_ code: UInt16, _ text: String = "") {
@@ -194,6 +201,12 @@ enum HTTPChecks {
             wheel.consumeScroll(delta: 1, precise: false)
             precondition(wheel.selected == 35, "Mouse wheel scroll changes selection")
             precondition(wheel.accessibilityValue() as? String == "35", "VoiceOver exposes current value")
+            wheel.spokenValue = { "开始时间 9 点 \($0) 分" }
+            precondition(wheel.accessibilityPerformIncrement())
+            precondition(wheel.accessibilityValue() as? String == "开始时间 9 点 40 分",
+                         "Spoken value must update before SwiftUI refresh or accessibility notification")
+            precondition(wheel.accessibilityPerformDecrement())
+            precondition(wheel.accessibilityValue() as? String == "开始时间 9 点 35 分")
             print("PASS: picker duration / untimed / midnight / invalid duration / Up Down PageUp PageDown / typing / wheel / trackpad / accessibility value")
             let model = AppModel()
             let client = model.client

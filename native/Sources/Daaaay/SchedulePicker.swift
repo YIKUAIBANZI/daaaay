@@ -84,6 +84,7 @@ struct SchedulePicker: View {
     }
 
     func setClock(_ clock: String, isStart: Bool) {
+        guard clock != (isStart ? task.start : task.end) else { validation = nil; return }
         if isStart { task.start = clock } else { task.end = clock }
         if !task.start.isEmpty && !task.end.isEmpty { task.nextDay = task.end < task.start }
         validation = nil

@@ -37,7 +37,9 @@ struct ScrollTimePicker: View {
             TimeWheel(values: values, selection: Binding(get: { selection.wrappedValue }, set: {
                 selection.wrappedValue = $0
                 commit()
-            }), label: "\(label)\(title)", spokenValue: "\(label) \(hour) 点 \(minute) 分")
+            }), label: "\(label)\(title)", spokenValue: { selected in
+                "\(label) \(title == "小时" ? selected : hour) 点 \(title == "分钟" ? selected : minute) 分"
+            })
                 .frame(width: 84, height: 160)
         }
     }
@@ -49,7 +51,7 @@ private struct TimeWheel: NSViewRepresentable {
     let values: [Int]
     @Binding var selection: Int
     let label: String
-    let spokenValue: String
+    let spokenValue: (Int) -> String
 
     func makeNSView(context: Context) -> TimeWheelView { TimeWheelView(frame: .zero) }
     func updateNSView(_ view: TimeWheelView, context: Context) {
@@ -66,7 +68,9 @@ final class TimeWheelView: NSView {
     var values: [Int] = Array(0...23)
     var selected = 0
     var onSelect: ((Int) -> Void)?
-    var spokenValue: String?
+    // Read from `selected` synchronously: SwiftUI may update the binding on a later pass,
+    // while accessibility queries can arrive immediately after valueChanged.
+    var spokenValue: ((Int) -> String)?
     private var scrollRemainder: CGFloat = 0
     private var typed = ""
     private var typedAt = Date.distantPast
@@ -159,7 +163,7 @@ final class TimeWheelView: NSView {
     }
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .incrementor }
-    override func accessibilityValue() -> Any? { spokenValue ?? String(format: "%02d", selected) }
+    override func accessibilityValue() -> Any? { spokenValue?(selected) ?? String(format: "%02d", selected) }
     override func accessibilityPerformIncrement() -> Bool { step(1); return true }
     override func accessibilityPerformDecrement() -> Bool { step(-1); return true }
 }

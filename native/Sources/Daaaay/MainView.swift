@@ -89,7 +89,7 @@ struct MainView: View {
                 Button("刷新") { Task { await model.refresh() } }
             } label: { Image(systemName: "ellipsis").frame(width: 32, height: 40) }
                 .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多日程操作")
-            Button { edit(nil) } label: { Label("新建事项", systemImage: "plus") }
+            Button { edit(nil) } label: { Label("添加事项", systemImage: "plus") }
                 .buttonStyle(PrimaryPillButtonStyle()).disabled(!model.canWrite)
         }
     }
@@ -142,7 +142,7 @@ struct MainView: View {
                             .buttonStyle(PrimaryPillButtonStyle())
                     } else {
                         Button { model.changeStatus(item.task, day: item.day, to: .running) } label: {
-                            Label(item.task.status == .paused ? "继续计时" : "开始这一件", systemImage: "play.fill")
+                            Label("开始", systemImage: "play.fill")
                         }.buttonStyle(PrimaryPillButtonStyle())
                     }
                 }.disabled(!model.online || model.busy)

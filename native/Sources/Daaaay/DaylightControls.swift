@@ -85,7 +85,8 @@ private struct DaylightButtonBody<Label: View>: View {
     let variant: DaylightButtonVariant
 
     @Environment(\.isEnabled) private var isEnabled
-    @FocusState private var isFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isFocused) private var isFocused
     @State private var isHovered = false
 
     private var background: Color {
@@ -107,15 +108,17 @@ private struct DaylightButtonBody<Label: View>: View {
             .background(background, in: variant.shape)
             .overlay {
                 variant.shape
-                    .stroke(isFocused ? DaylightTheme.ink : DaylightTheme.hairline.opacity(isHovered && isEnabled ? 1 : 0), lineWidth: isFocused ? 2 : 1)
+                    .stroke(
+                        isFocused && variant == .primary ? DaylightTheme.surface
+                            : isFocused ? DaylightTheme.action : DaylightTheme.hairline,
+                        lineWidth: isFocused ? 2 : 1
+                    )
             }
             .contentShape(variant.shape)
-            .scaleEffect(isPressed && isEnabled ? 0.98 : 1)
-            .animation(.easeOut(duration: 0.12), value: isPressed)
-            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .scaleEffect(isPressed && isEnabled && !reduceMotion ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
             .onHover { isHovered = $0 }
-            .focusable(isEnabled)
-            .focused($isFocused)
             .accessibilityAddTraits(isPressed ? .isButton : [])
     }
 }

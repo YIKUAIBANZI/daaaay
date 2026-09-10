@@ -25,8 +25,8 @@ struct TaskEditor: View {
             VStack(alignment:.leading,spacing:18) {
             HStack {
                 VStack(alignment:.leading,spacing:5) {
-                    Text(session.isNew ? "留一段时间" : "调整这个事项").font(.title2.weight(.semibold))
-                    Text("让时间有个落点").font(.subheadline).foregroundStyle(DaylightTheme.slate)
+                    Text(session.isNew ? "添加事项" : "编辑事项").font(.title2.weight(.semibold))
+                    Text("保存后同步到本机日程").font(.subheadline).foregroundStyle(DaylightTheme.slate)
                 }
                 Spacer()
                 Button { dismiss() } label: { Image(systemName:"xmark").frame(width:DaylightTheme.minimumTarget,height:DaylightTheme.minimumTarget) }.buttonStyle(.plain).accessibilityLabel("关闭编辑")
@@ -89,7 +89,7 @@ struct TaskEditor: View {
                 }
                 Spacer()
                 Button { dismiss() } label: { Text("取消").frame(minHeight:DaylightTheme.minimumTarget) }.keyboardShortcut(.cancelAction)
-                Button { save() } label: { Text("保存事项").frame(minHeight:DaylightTheme.primaryHeight) }
+                Button { save() } label: { Text(session.isNew ? "添加事项" : "保存修改").frame(minHeight:DaylightTheme.primaryHeight) }
                     .buttonStyle(.borderedProminent).tint(DaylightTheme.action).keyboardShortcut(.defaultAction)
                     .disabled(needsReload || movingRunningTask || !model.online)
             }.frame(minHeight:DaylightTheme.primaryHeight).disabled(model.busy)

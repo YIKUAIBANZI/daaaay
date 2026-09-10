@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 final class FocusPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    // A click can grant keyboard focus without activating this nonactivating panel.
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -25,17 +26,22 @@ final class WindowController: NSObject, NSWindowDelegate {
         panel.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary]
         panel.hidesOnDeactivate=false; panel.isMovableByWindowBackground=true
         panel.isOpaque=false; panel.backgroundColor = .clear; panel.hasShadow=true; panel.isReleasedWhenClosed=false
-        panel.contentView=NSHostingView(rootView:FocusView(model:model,floating:true)
-            .frame(width:340,height:340,alignment:.topLeading)
-            .background(DaylightTheme.surface,in:RoundedRectangle(cornerRadius:20))
-            .overlay(RoundedRectangle(cornerRadius:20).strokeBorder(DaylightTheme.hairline))
-            .preferredColorScheme(.light))
+        panel.contentView=Self.makeFocusContent(model:model)
         if let screen=NSScreen.main { let frame=screen.visibleFrame; panel.setFrameOrigin(NSPoint(x:frame.maxX-364,y:frame.maxY-370)) }
         if let saved=UserDefaults.standard.string(forKey:"focusFrame") {
             let rect=NSRectFromString(saved)
             if NSScreen.screens.contains(where:{$0.visibleFrame.intersects(rect)}) { panel.setFrameOrigin(rect.origin) }
         }
         panel.delegate=self
+    }
+    static func makeFocusContent(model: AppModel) -> NSView {
+        NSHostingView(rootView:FocusView(model:model,floating:true)
+            .frame(width:340,height:340,alignment:.topLeading)
+            .background(DaylightTheme.surface,in:RoundedRectangle(cornerRadius:20))
+            .overlay(RoundedRectangle(cornerRadius:20).strokeBorder(DaylightTheme.hairline))
+            .compositingGroup()
+            .shadow(color:.black.opacity(0.08),radius:10,y:4)
+            .preferredColorScheme(.light))
     }
     func showMain() {
         NSApp.activate(ignoringOtherApps:true); mainWindow.makeKeyAndOrderFront(nil)

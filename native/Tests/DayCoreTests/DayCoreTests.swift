@@ -130,6 +130,9 @@ struct DayCoreTests {
     }
 
     func testScheduleEditingNormalizesUntimedAndTimedDrafts() throws {
+        let placeholder = try ScheduleEditing.normalized(date: "2026-09-09", startHour: -1, startMinute: 99,
+                                                        endHour: 99, endMinute: -1, isUntimed: true)
+        XCTAssertEqual(placeholder, ScheduleDraft(date: "2026-09-09", start: "", end: "", nextDay: false, isUntimed: true))
         let timed = try ScheduleEditing.normalized(date: "2026-09-09", startHour: 23, startMinute: 40,
                                                    endHour: 1, endMinute: 10, isUntimed: false)
         XCTAssertEqual(timed, ScheduleDraft(date: "2026-09-09", start: "23:40", end: "01:10", nextDay: true, isUntimed: false))

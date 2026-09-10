@@ -64,14 +64,14 @@ public enum ScheduleEditing {
         guard let noon = DayClock.parseISO("\(date)T12:00:00+08:00"), DayClock.dayString(noon) == date else {
             throw ScheduleEditingError.invalidDate
         }
+        if isUntimed {
+            return ScheduleDraft(date: date, start: "", end: "", nextDay: false, isUntimed: true)
+        }
         guard (0...23).contains(startHour), (0...23).contains(endHour) else {
             throw ScheduleEditingError.invalidHour
         }
         guard (0...59).contains(startMinute), (0...59).contains(endMinute) else {
             throw ScheduleEditingError.invalidMinute
-        }
-        if isUntimed {
-            return ScheduleDraft(date: date, start: "", end: "", nextDay: false, isUntimed: true)
         }
 
         let start = snappedClock(hour: startHour, minute: startMinute)
